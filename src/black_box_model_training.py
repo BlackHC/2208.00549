@@ -109,6 +109,124 @@ def wandb_log_training(key_path, epochs_log, best_epoch, era_epochs):
 LOG_INTERVAL = 10
 
 
+def train_simple(
+    *,
+    model,
+    train_loader: torch.utils.data.DataLoader,
+    validation_loader: torch.utils.data.DataLoader,
+    patience: Optional[int],
+    max_epochs: int,
+    device: str,
+    training_log: dict,
+    wandb_key_path: str,
+    loss=None,
+    validation_loss=None,
+    optimizer=None,
+    prefer_accuracy=True,
+    train_augmentations=None,
+):
+    if not len(train_loader.dataset):
+        return optimizer
+
+    if loss is None:
+        loss = nn.NLLLoss()
+    if validation_loss is None:
+        validation_loss = loss
+
+    train_model = model
+    if train_augmentations is not None:
+        train_model = torch.nn.Sequential(train_augmentations, train_model)
+
+    validation_model = model
+
+    # Move model to device before creating the optimizer
+    train_model.to(device)
+
+    if optimizer is None:
+        optimizer = torch.optim.Adam(model.parameters(), weight_decay=5e-4)
+
+    trainer = create_supervised_trainer(train_model, optimizer, loss_fn=multi_sample_loss(loss), device=device)
+
+    metrics = create_metrics(validation_loss)
+
+    validation_evaluator = create_supervised_evaluator(validation_model, metrics=metrics, device=device)
+
+    assert len(validation_loader.dataset) > 0, "Empty validation loader does not work with early stopping!!!"
+
+    @trainer.on(Events.EPOCH_COMPLETED)
+    def compute_metrics(engine):
+        validation_evaluator.run(validation_loader)
+
+    # Only to look nicer.
+    RunningAverage(output_transform=lambda x: x).attach(trainer, "crossentropy")
+
+    enable_tqdm_pbars = is_run_from_ipython()
+
+    setup_common_training_handlers(
+        trainer, with_pbars=enable_tqdm_pbars, with_gpu_stats=torch.cuda.is_available(), log_every_iters=LOG_INTERVAL
+    )
+
+    if enable_tqdm_pbars:
+        ProgressBar(persist=False).attach(
+            validation_evaluator,
+            metric_names="all",
+            event_name=Events.ITERATION_COMPLETED(every=LOG_INTERVAL),
+        )
+    else:
+        ignite_progress_bar(trainer, desc=lambda engine: "Training", log_interval=LOG_INTERVAL)
+
+    training_log["epochs"] = []
+    epochs_log = training_log["epochs"]
+
+    # Logging
+    @validation_evaluator.on(Events.EPOCH_COMPLETED)
+    def log_training_results(engine):
+        metrics = dict(engine.state.metrics)
+        epochs_log.append(metrics)
+
+        if is_run_from_ipython():
+            print(f"Epoch metrics: {metrics}")
+
+    # Add early stopping
+    if patience is not None:
+        if prefer_accuracy:
+
+            def score_function():
+                return float(validation_evaluator.state.metrics["accuracy"])
+
+        else:
+
+            def score_function():
+                return float(-validation_evaluator.state.metrics["crossentropy"])
+
+        early_stopping = RestoringEarlyStopping(
+            patience=patience,
+            score_function=score_function,
+            module=model,
+            optimizer=optimizer,
+            training_engine=trainer,
+            validation_engine=validation_evaluator,
+        )
+    else:
+        early_stopping = None
+
+    # Kick everything off
+    trainer.run(train_loader, max_epochs=max_epochs)
+
+    best_epoch = None
+
+    if early_stopping:
+        training_log["best_epoch"] = early_stopping.best_epoch - 1
+        best_epoch = early_stopping.best_epoch - 1
+
+    # WandB support
+    wandb_log_training(wandb_key_path, epochs_log, best_epoch=best_epoch, era_epochs=None)
+
+    # Return the optimizer in case we want to continue training.
+    return optimizer
+
+
+
 def train(
     *,
     model,
@@ -493,6 +611,33 @@ def evaluate_old(*, model, num_samples, loader, device, loss=None):
     metrics = create_metrics(loss)
 
     evaluator = create_supervised_evaluator(evaluation_model, metrics=metrics, device=device)
+
+    ProgressBar(persist=False).attach(
+        evaluator,
+        metric_names="all",
+        event_name=Events.ITERATION_COMPLETED(every=LOG_INTERVAL),
+    )
+
+    # Kick everything off
+    evaluator.run(loader, max_epochs=1)
+
+    return evaluator.state.metrics
+
+
+def evaluate_simple(*, model, loader, device, loss=None):
+    # TODO: rewrite this on top of TrainedModel?
+    # Add "get_log_prob_predictions" which returns the mean?
+    # Compute accuracy etc based on that?
+
+    # Move model to device
+    model.to(device)
+
+    if loss is None:
+        loss = nn.NLLLoss()
+
+    metrics = create_metrics(loss)
+
+    evaluator = create_supervised_evaluator(model, metrics=metrics, device=device)
 
     ProgressBar(persist=False).attach(
         evaluator,
