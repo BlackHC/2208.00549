@@ -1,8 +1,21 @@
 # Unifying Approaches in Data Subset Selection - Experiments
 
-See https://arxiv.org/abs/2208.00549.
+See https://openreview.net/forum?id=UVDAKQANOW and https://arxiv.org/abs/2208.00549.
 
-> The mutual information between predictions and model parameters -- also referred to as expected information gain or BALD in machine learning -- measures informativeness. It is a popular acquisition function in Bayesian active learning and Bayesian optimal experiment design. In data subset selection, i.e. active learning and active sampling, several recent works use Fisher information, Hessians, similarity matrices based on the gradients, or simply the gradient lengths to compute the acquisition scores that guide sample selection. Are these different approaches connected, and if so how? In this paper, we revisit the Fisher information and use it to show how several otherwise disparate methods are connected as approximations of information-theoretic quantities.
+> Recently proposed methods in data subset selection, that is active learning and active
+sampling, use Fisher information, Hessians, similarity matrices based on gradients, and
+gradient lengths to estimate how informative data is for a model’s training. Are these
+different approaches connected, and if so, how? We revisit the fundamentals of Bayesian
+optimal experiment design and show that these recently proposed methods can be understood
+as approximations to information-theoretic quantities: among them, the mutual information
+between predictions and model parameters, known as expected information gain or BALD in
+machine learning, and the mutual information between predictions of acquisition candidates
+and test samples, known as expected predictive information gain. We develop a comprehensive
+set of approximations using Fisher information and observed information and derive a unified
+framework that connects seemingly disparate literature. Although Bayesian methods are often
+seen as separate from non-Bayesian ones, the sometimes fuzzy notion of “informativeness”
+expressed in various non-Bayesian objectives leads to the same couple of information
+quantities, which were, in principle, already known by Lindley (1956) and MacKay (1992).
 
 ## Setup
 
